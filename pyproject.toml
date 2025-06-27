@@ -1,19 +1,45 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch"]
 build-backend = "hatchling.build"
 
 [project]
 name = "mongodb-typegen"
-version = "0.1.3"
-dependencies = [
-    "pymongo[srv]"
+version = "1.1.0"
+authors = [
+    {name = "Rohit Patil", email = "rahulhimesh09@gmail.com"},
 ]
-requires-python = ">=3.8"
+description = "A CLI tool to generate Python TypedDict models from a MongoDB database."
 readme = "README.md"
 license = {text = "MIT"}
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Database",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "pymongo[srv]",
+    "click"
+]
+keywords = ["mongodb", "typeddict", "codegen", "type-generation", "pymongo", "odm"]
+
+[project.urls]
+"Homepage" = "https://github.com/raprocks/mongodb-typegen"
+"Bug Tracker" = "https://github.com/raprocks/mongodb-typegen/issues"
+"Repository" = "https://github.com/raprocks/mongodb-typegen"
 
 [project.scripts]
-mongodb-typegen = "mongodb_typegen.cli:main"
+mongodb-typegen = "mongodb_typegen.cli:cli"
 
 [project.optional-dependencies]
 test = [

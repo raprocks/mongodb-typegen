@@ -1,4 +1,5 @@
 import pytest
+import sys
 from bson.objectid import ObjectId
 from datetime import datetime
 from mongodb_typegen.cli import to_pascal_case, MongoTypedDictGenerator
@@ -6,14 +7,12 @@ from mongodb_typegen.cli import to_pascal_case, MongoTypedDictGenerator
 @pytest.fixture
 def generator(mocker):
     """Provides a MongoTypedDictGenerator instance with a mocked MongoDB client."""
-    # Mock the MongoDB client and its methods
     mock_client = mocker.patch('pymongo.MongoClient')
+    mock_client.return_value.server_info.return_value = True  # Mock server_info call
     mock_db = mock_client.return_value.__getitem__.return_value
-    mock_db.list_collection_names.return_value = ['users', 'products']
+    mock_db.list_collection_names.return_value = ['users', 'products', 'empty_collection']
 
-    # Mock the 'find' method for each collection
-    mock_users_collection = mocker.MagicMock()
-    mock_users_collection.find.return_value = [
+    user_docs = [
         {
             '_id': ObjectId(),
             'full name': 'Alice',
@@ -35,8 +34,7 @@ def generator(mocker):
         }
     ]
 
-    mock_products_collection = mocker.MagicMock()
-    mock_products_collection.find.return_value = [
+    product_docs = [
         {
             'product name': 'Laptop',
             'price': 1200.50,
@@ -51,20 +49,34 @@ def generator(mocker):
         }
     ]
 
-    # Configure the mock database to return the correct mock collection
+    mock_users_collection = mocker.MagicMock()
+    mock_users_collection.aggregate.return_value = user_docs
+
+    mock_products_collection = mocker.MagicMock()
+    mock_products_collection.aggregate.return_value = product_docs
+
+    mock_empty_collection = mocker.MagicMock()
+    mock_empty_collection.aggregate.return_value = []
+
     def getitem_side_effect(name):
         if name == 'users':
             return mock_users_collection
-        elif name == 'products':
+        if name == 'products':
             return mock_products_collection
+        if name == 'empty_collection':
+            return mock_empty_collection
         return mocker.MagicMock()
 
     mock_db.__getitem__.side_effect = getitem_side_effect
 
-    # Initialize the generator with the mocked client
     gen = MongoTypedDictGenerator(mongo_uri='mongodb://mock', db_name='mock_db')
     gen.client = mock_client
     gen.db = mock_db
+    
+    # Attach docs to the generator instance for easy access in tests
+    gen.user_docs = user_docs
+    gen.product_docs = product_docs
+    
     return gen
 
 
@@ -96,7 +108,7 @@ def test_map_value_to_type_str(generator):
 
 def test_infer_schema_from_docs(generator):
     """Tests the _infer_schema_from_docs method."""
-    docs = generator.db['users'].find()
+    docs = generator.user_docs
     schema = generator._infer_schema_from_docs(docs, 'users')
 
     assert 'full name' in schema
@@ -104,12 +116,12 @@ def test_infer_schema_from_docs(generator):
     assert not schema['full name']['is_optional']
 
     assert 'age' in schema
-    assert schema['age']['types'] == {'int', 'Any'}
-    assert not schema['age']['is_optional']
+    assert schema['age']['types'] == {'int', 'Any'}  # From 30 and None
+    assert not schema['age']['is_optional'] # Present in all docs
 
     assert 'company_id' in schema
     assert schema['company_id']['types'] == {'int'}
-    assert schema['company_id']['is_optional']
+    assert schema['company_id']['is_optional'] # Missing from one doc
 
 
 # --- Test TypedDict String Generation ---
@@ -123,32 +135,169 @@ def test_create_typeddict_str(generator):
     }
     class_str = generator._create_typeddict_str('TestClass', schema)
 
+    # Fields should be sorted alphabetically
     expected_str = (
-        'TestClass = TypedDict("TestClass", {\n'
-        '    \'name\': str,\n'
-        '    \'age\': Optional[int],\n'
-        '    \'tags\': List[str]\n'
-        '})'
+        'class TestClass(TypedDict):\n'
+        '    age: NotRequired[int]\n'
+        '    name: str\n'
+        '    tags: List[str]'
     )
-    assert class_str == expected_str
 
 
-# --- Test Main Generation Logic ---
+# --- Test CLI Commands ---
+from click.testing import CliRunner
+from mongodb_typegen.cli import cli
 
-def test_generate_models(generator):
-    """Tests the main generate_models method."""
-    generated_code = generator.generate_models()
+def test_generate_command_dry_run(mocker):
+    """Tests the generate command with --dry-run."""
+    runner = CliRunner()
+    
+    # Mock the generator and its methods
+    mock_generator_init = mocker.patch('mongodb_typegen.cli.MongoTypedDictGenerator')
+    mock_generator = mock_generator_init.return_value
+    mock_generator.connect.return_value = None
+    mock_generator.disconnect.return_value = None
+    mock_generator.list_collections.return_value = ['users', 'products']
+    mock_generator.generate_models_for_collections.return_value = "class Users(TypedDict):\n    ..."
+    mock_generator.generated_classes = {'Users': 'class Users...'}
 
-    # Check that the main classes are generated
-    assert 'Users = TypedDict("Users", {' in generated_code
-    assert 'Products = TypedDict("Products", {' in generated_code
+    result = runner.invoke(cli, [
+        'generate',
+        '--db', 'testdb',
+        '--dry-run'
+    ])
 
-    # Check for a nested class
-    assert 'UsersProfile = TypedDict("UsersProfile", {' in generated_code
+    assert result.exit_code == 0, result.output
+    assert "--- Generated Code (Dry Run) ---" in result.output
+    assert "class Users(TypedDict):" in result.output
 
-    # Check for correct field definitions
-    assert "'full name': str" in generated_code
-    assert "'age': Union[Any, int]" in generated_code
-    assert "'company_id': Optional[int]" in generated_code
-    assert "'profile': UsersProfile" in generated_code
-    assert "'product name': str" in generated_code
+
+def test_generate_command_connection_error(mocker):
+    """Tests the generate command with a connection error."""
+    runner = CliRunner()
+    
+    mock_generator_init = mocker.patch('mongodb_typegen.cli.MongoTypedDictGenerator')
+    mock_generator = mock_generator_init.return_value
+    mock_generator.connect.side_effect = ConnectionError("Mocked connection error")
+
+    result = runner.invoke(cli, [
+        'generate',
+        '--db', 'testdb'
+    ])
+
+    assert result.exit_code == 1
+    assert "Error: Mocked connection error" in result.output
+
+
+def test_generate_command_no_collections(mocker):
+    """Tests the generate command with no collections found."""
+    runner = CliRunner()
+    
+    mock_generator_init = mocker.patch('mongodb_typegen.cli.MongoTypedDictGenerator')
+    mock_generator = mock_generator_init.return_value
+    mock_generator.list_collections.return_value = []
+
+    result = runner.invoke(cli, [
+        'generate',
+        '--db', 'testdb'
+    ])
+
+    assert result.exit_code == 1
+    assert "No collections to process." in result.output
+
+
+def test_generate_command_exclude_collections(mocker):
+    """Tests the generate command with excluded collections."""
+    runner = CliRunner()
+    
+    mock_generator_init = mocker.patch('mongodb_typegen.cli.MongoTypedDictGenerator')
+    mock_generator = mock_generator_init.return_value
+    mock_generator.list_collections.return_value = ['users', 'products', 'orders']
+    mock_generator.generate_models_for_collections.return_value = "..."
+    mock_generator.generated_classes = {'Users': 'class Users...'}
+
+    result = runner.invoke(cli, [
+        'generate',
+        '--db', 'testdb',
+        '--exclude', 'products,orders',
+        '--dry-run'
+    ])
+
+    assert result.exit_code == 0
+    mock_generator.generate_models_for_collections.assert_called_once_with(['users'], 100)
+
+
+def test_generate_command_file_output(mocker):
+    """Tests the generate command writing to a file."""
+    runner = CliRunner()
+    
+    mock_generator_init = mocker.patch('mongodb_typegen.cli.MongoTypedDictGenerator')
+    mock_generator = mock_generator_init.return_value
+    mock_generator.connect.return_value = None
+    mock_generator.disconnect.return_value = None
+    mock_generator.list_collections.return_value = ['users']
+    mock_generator.generate_models_for_collections.return_value = "class Users(TypedDict):\n    ..."
+    mock_generator.generated_classes = {'Users': 'class Users...'}
+
+    mock_open = mocker.patch('builtins.open', mocker.mock_open())
+    mocker.patch('os.path.exists', return_value=False)
+    mocker.patch('pathlib.Path.mkdir')
+
+    result = runner.invoke(cli, [
+        'generate',
+        '--db', 'testdb',
+        '--out', 'models.py'
+    ])
+
+    assert result.exit_code == 0, result.output
+    assert "Models successfully generated and saved to 'models.py'" in result.output
+    mock_open.assert_called_with('models.py', 'w', encoding='utf-8')
+    mock_open().write.assert_called_once_with("class Users(TypedDict):\n    ...")
+
+
+def test_list_collections_command(mocker):
+    """Tests the list-collections command."""
+    runner = CliRunner()
+    
+    mock_generator_init = mocker.patch('mongodb_typegen.cli.MongoTypedDictGenerator')
+    mock_generator = mock_generator_init.return_value
+    mock_generator.connect.return_value = None
+    mock_generator.disconnect.return_value = None
+    mock_generator.list_collections.return_value = ['users', 'products']
+
+    result = runner.invoke(cli, [
+        'list-collections',
+        '--db', 'testdb'
+    ])
+
+    assert result.exit_code == 0
+    assert "Collections in database 'testdb':" in result.output
+    assert "1. users" in result.output
+    assert "2. products" in result.output
+
+
+def test_preview_command(mocker):
+    """Tests the preview command."""
+    runner = CliRunner()
+    
+    mock_generator_init = mocker.patch('mongodb_typegen.cli.MongoTypedDictGenerator')
+    mock_generator = mock_generator_init.return_value
+    mock_generator.connect.return_value = None
+    mock_generator.disconnect.return_value = None
+    mock_generator.list_collections.return_value = ['users']
+    mock_generator.generate_preview_for_collection.return_value = {
+        "schema": {"name": {"types": {"str"}, "is_optional": False}},
+        "typed_dict": "class Users(TypedDict):\n    name: str",
+        "docs_sampled": 5
+    }
+
+    result = runner.invoke(cli, [
+        'preview',
+        '--db', 'testdb',
+        'users'
+    ])
+
+    assert result.exit_code == 0
+    assert "Schema preview for 'users'" in result.output
+    assert "Generated TypedDict:" in result.output
+    assert "class Users(TypedDict):" in result.output

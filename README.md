@@ -1,14 +1,20 @@
-# MongoDB TypedDict Generator
+# MongoDB TypeGen
 
-This tool connects to a MongoDB database, inspects the collections, and generates Python `TypedDict` classes that represent your data schemas. This provides static type checking for your MongoDB documents, helping you catch bugs and improve code quality.
+A command-line tool to connect to a MongoDB database, inspect collections, and automatically generate Python `TypedDict` models. This brings static type checking to your MongoDB documents, helping you write safer, more maintainable code.
 
 ## Key Features
 
-*   **Automatic Schema Inference:** Analyzes documents to infer field names and types.
-*   **`TypedDict` Generation:** Creates Python `TypedDict` classes for each collection.
-*   **Handles Nested Data:** Recursively generates `TypedDict` classes for nested documents.
-*   **Preserves Original Field Names:** Correctly handles field names with spaces or other special characters by using the functional `TypedDict` syntax.
-*   **Optional & Union Types:** Correctly identifies optional fields and handles fields with multiple types.
+- **Automatic Schema Inference:** Analyzes documents to infer field names and types.
+- **Robust `TypedDict` Generation:** Creates Python `TypedDict` classes for each collection.
+- **Powerful CLI:** Offers multiple commands (`generate`, `list-collections`, `preview`) for a streamlined workflow.
+- **Handles Complex Schemas:**
+  - Recursively generates `TypedDict` classes for nested documents.
+  - Correctly identifies optional fields and fields with multiple `Union` types.
+  - Preserves original field names, even those with spaces or special characters.
+- **Flexible & Configurable:**
+  - Filter for specific collections to include or exclude.
+  - Customize the number of documents to sample for schema inference.
+  - Perform a "dry run" to see generated code without writing to a file.
 
 ## Installation
 
@@ -18,21 +24,76 @@ pip install mongodb-typegen
 
 ## Usage
 
-To generate the models, run the following command in your terminal:
+The primary command is `generate`, which creates the Python models file.
 
 ```bash
-mongodb-typegen --db <database_name> --uri <mongo_uri>
+mongodb-typegen generate --db <database_name>
 ```
 
-### Command-Line Arguments
+You can also use other commands like `list-collections` and `preview` for a better workflow.
 
-| Argument          | Alias | Default                     | Description                                                |
-| ----------------- | ----- | --------------------------- | ---------------------------------------------------------- |
-| `--uri`           |       | `mongodb://localhost:27017/` | The connection URI for the MongoDB instance.               |
-| `--db`            |       | (Required)                  | The name of the database to inspect.                       |
-| `--sample-size`   | `-s`  | `100`                       | The number of documents to inspect per collection.         |
-| `--output-file`   | `-o`  | `generated_models.py`       | The path to the output file for the generated models.      |
-| `--setup-dummy-data` |    |                             | Set up a dummy database for demonstration purposes.        |
+### Commands
+
+#### `generate`
+
+Generate `TypedDict` models from your MongoDB collections.
+
+| Argument | Alias | Default | Description |
+| --- | --- | --- | --- |
+| `--uri` | `-u` | `mongodb://localhost:27017/` | MongoDB connection string. |
+| `--db` | `-d` | (Required) | Name of the MongoDB database. |
+| `--out` | `-o` | `generated_models.py` | Output file path for generated models. |
+| `--sample-size` | `-s` | `100` | Number of documents to sample per collection. |
+| `--collections` | `-c` | | Comma-separated list of collections to process. |
+| `--exclude` | `-e` | | Comma-separated list of collections to exclude. |
+| `--dry-run` | | | Show generated code without writing to a file. |
+| `--verbose` | `-v` | | Enable verbose output. |
+| `--quiet` | `-q` | | Suppress all output except errors. |
+
+**Example:**
+
+```bash
+# Generate models for all collections in the 'analytics' database
+mongodb-typegen generate --db analytics
+
+# Generate models for specific collections and save to a different file
+mongodb-typegen generate --db ecommerce --collections users,products --out models/db_types.py
+
+# Perform a dry run to preview the output for the 'logs' collection
+mongodb-typegen generate --db app_logs --collections logs --dry-run
+```
+
+#### `list-collections`
+
+List all collections in a specified database.
+
+| Argument | Alias | Default | Description |
+| --- | --- | --- | --- |
+| `--uri` | `-u` | `mongodb://localhost:27017/` | MongoDB connection string. |
+| `--db` | `-d` | (Required) | Name of the MongoDB database. |
+
+**Example:**
+
+```bash
+mongodb-typegen list-collections --db my_app
+```
+
+#### `preview`
+
+Preview the inferred schema and `TypedDict` for a single collection without generating a file. This is useful for quick inspection.
+
+| Argument | Alias | Default | Description |
+| --- | --- | --- | --- |
+| `--uri` | `-u` | `mongodb://localhost:27017/` | MongoDB connection string. |
+| `--db` | `-d` | (Required) | Name of the MongoDB database. |
+| `COLLECTION_NAME` | | (Required) | The name of the collection to preview. |
+| `--sample-size` | `-s` | `10` | Number of documents to sample for the preview. |
+
+**Example:**
+
+```bash
+mongodb-typegen preview --db my_app users
+```
 
 ### Example Output
 
@@ -55,7 +116,7 @@ Given a collection named `users` with documents like this:
 The tool will generate the following `TypedDict` classes:
 
 ```python
-# This file was auto-generated by MongoTypedDictGenerator. Do not edit manually.
+# This file was auto-generated by mongodb-typegen. Do not edit manually.
 
 from typing import TypedDict, List, Optional, Union, Any
 from datetime import datetime
@@ -68,9 +129,9 @@ UsersProfile = TypedDict("UsersProfile", {
 
 Users = TypedDict("Users", {
     '_id': ObjectId,
-    'full name': str,
-    'email': str,
     'age': int,
+    'email': str,
+    'full name': str,
     'is_active': bool,
     'profile': UsersProfile
 })
